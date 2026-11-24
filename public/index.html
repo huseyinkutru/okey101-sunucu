@@ -68,14 +68,10 @@
     </div>
   </div>
 
-   <script src="https://socket.io"></script>
+  <script src="https://onrender.com"></script>
   <script>
-    const RENDER_URL = "https://onrender.com";
-    
-    // Önce standart HTTPS (polling) ile bağlanıp ardından WebSocket'e geçmesini sağlıyoruz
-    const socket = io(RENDER_URL, {
-      transports: ['polling', 'websocket'],
-      reconnectionAttempts: 5
+    const socket = io("https://okey101-sunucu-bypl.onrender.com", {
+      transports: ['polling', 'websocket']
     });
     
     let mySeat = 0;
@@ -87,9 +83,8 @@
     });
 
     socket.on('connect_error', (err) => {
-      document.getElementById('connStatus').innerText = 'Bağlantı Hatası: ' + err.message;
+      document.getElementById('connStatus').innerText = 'Hata: ' + err.message;
       document.getElementById('connStatus').style.color = '#e74c3c';
-      console.error('Socket Hatası:', err);
     });
 
     socket.on('joined', (data) => {
@@ -144,6 +139,5 @@
       });
     }
   </script>
-
 </body>
 </html>
