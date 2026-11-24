@@ -14,6 +14,9 @@ import {
 const app = express();
 app.use(cors());
 
+app.use(express.static('public'));
+
+
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: "*", methods: ["GET", "POST"] }
