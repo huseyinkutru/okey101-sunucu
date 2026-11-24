@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>101 Okey Masası</title>
+  <style>
+    * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, sans-serif; }
+    body { margin: 0; background: #144d29; color: #fff; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    .top-bar { background: #0d331b; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #1f6e3c; }
+    .btn { background: #e67e22; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    .btn:hover { background: #d35400; }
+    .btn-green { background: #27ae60; }
+    .table { flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 15px; }
+    .player-badge { background: rgba(0,0,0,0.5); padding: 6px 14px; border-radius: 20px; font-size: 14px; display: inline-block; }
+    .active-turn { border: 2px solid #f1c40f; box-shadow: 0 0 10px #f1c40f; }
+    .top-seat { text-align: center; }
+    .middle-row { display: flex; justify-content: space-between; align-items: center; flex: 1; }
+    .center-area { flex: 1; margin: 0 20px; background: rgba(0,0,0,0.2); border-radius: 12px; height: 70%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; padding: 10px; }
+    .deck-controls { display: flex; gap: 20px; align-items: center; }
+    .pile { width: 55px; height: 75px; background: #f5f6fa; color: #2f3640; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 20px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.4); border-bottom: 4px solid #dcdde1; }
+    .pile.back { background: #c0392b; color: white; border-bottom-color: #962d22; }
+    .rack-container { background: #5c3a21; border-top: 5px solid #3e2716; padding: 12px; border-radius: 10px 10px 0 0; }
+    .rack-controls { display: flex; justify-content: space-between; margin-bottom: 10px; }
+    .rack { display: grid; grid-template-columns: repeat(14, 1fr); gap: 6px; min-height: 130px; background: #4a2e19; padding: 8px; border-radius: 6px; }
+    .tile { background: #fdfbf7; border-radius: 5px; height: 62px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 22px; font-weight: bold; cursor: pointer; box-shadow: 0 3px 0 #bdc3c7; user-select: none; }
+    .tile.selected { border: 2px solid #f1c40f; transform: translateY(-6px); }
+    .red { color: #e74c3c; } .blue { color: #2980b9; } .black { color: #2c3e50; } .yellow { color: #f39c12; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-top: 2px; }
+  </style>
+</head>
+<body>
+
+  <div class="top-bar">
+    <div><strong>101 OKEY</strong> | Durum: <span id="connStatus" style="color:#f1c40f;">Bağlanıyor...</span> | Koltuk: <span id="mySeat">-</span></div>
+    <button class="btn btn-green" onclick="startGame()">Yeni El Başlat</button>
+  </div>
+
+  <div class="table">
+    <div class="top-seat"><div class="player-badge" id="seat-2">Karşı Oyuncu</div></div>
+    <div class="middle-row">
+      <div class="player-badge" id="seat-3">Sol Oyuncu</div>
+      <div class="center-area">
+        <div class="deck-controls">
+          <div>
+            <div style="font-size:11px; text-align:center; margin-bottom:4px;">Yerden Çek</div>
+            <div class="pile back" onclick="sendAction('drawStock')">101</div>
+          </div>
+          <div>
+            <div style="font-size:11px; text-align:center; margin-bottom:4px;">Yandan Al</div>
+            <div class="pile" id="discardPile" onclick="sendAction('drawDiscard')">-</div>
+          </div>
+        </div>
+        <div id="tableMelds" style="font-size: 13px; color: #ddd;">Masaya açılan perler burada görünecek</div>
+      </div>
+      <div class="player-badge" id="seat-1">Sağ Oyuncu</div>
+    </div>
+
+    <div class="rack-container">
+      <div class="rack-controls">
+        <div class="player-badge" id="seat-0">Siz</div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn" onclick="sendAction('openHand')">El Aç (101)</button>
+          <button class="btn" style="background:#c0392b;" onclick="discardSelected()">Seçili Taşı At</button>
+        </div>
+      </div>
+      <div class="rack" id="myRack"></div>
+    </div>
+  </div>
+
+   <script src="https://socket.io"></script>
+  <script>
+    const RENDER_URL = "https://onrender.com";
+    
+    // Önce standart HTTPS (polling) ile bağlanıp ardından WebSocket'e geçmesini sağlıyoruz
+    const socket = io(RENDER_URL, {
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 5
+    });
+    
+    let mySeat = 0;
+    let selectedTileId = null;
+
+    socket.on('connect', () => {
+      document.getElementById('connStatus').innerText = 'Bağlandı!';
+      document.getElementById('connStatus').style.color = '#2ecc71';
+    });
+
+    socket.on('connect_error', (err) => {
+      document.getElementById('connStatus').innerText = 'Bağlantı Hatası: ' + err.message;
+      document.getElementById('connStatus').style.color = '#e74c3c';
+      console.error('Socket Hatası:', err);
+    });
+
+    socket.on('joined', (data) => {
+      mySeat = data.seatIndex;
+      document.getElementById('mySeat').innerText = (mySeat + 1) + '. Koltuk';
+    });
+
+    socket.on('errorMsg', (msg) => alert('Uyarı: ' + msg));
+
+    socket.on('gameState', (data) => {
+      mySeat = data.seatIndex;
+      renderGame(data);
+    });
+
+    function startGame() { socket.emit('startGame'); }
+    function sendAction(type, extra = {}) { socket.emit('playerAction', { type, seat: mySeat, ...extra }); }
+    
+    function discardSelected() {
+      if (selectedTileId === null) return alert('Atmak için bir taş seçin.');
+      sendAction('discard', { tileId: selectedTileId });
+      selectedTileId = null;
+    }
+
+    function renderGame(data) {
+      for (let i = 0; i < 4; i++) {
+        const relativePos = (i - mySeat + 4) % 4;
+        const el = document.getElementById('seat-' + relativePos);
+        if (el) {
+          const label = i === mySeat ? 'Siz' : (data.players[i] && data.players[i] !== 'BOT' ? 'Arkadaş (' + (i+1) + ')' : 'Bot ' + (i+1));
+          el.innerText = label;
+          el.classList.toggle('active-turn', data.currentTurn === i);
+        }
+      }
+
+      const discardEl = document.getElementById('discardPile');
+      if (data.lastDiscard) {
+        discardEl.innerText = data.lastDiscard.value;
+        discardEl.className = 'pile ' + (data.lastDiscard.color || 'black');
+      } else {
+        discardEl.innerText = '-';
+        discardEl.className = 'pile';
+      }
+
+      const rackEl = document.getElementById('myRack');
+      rackEl.innerHTML = '';
+      (data.myHand || []).forEach(tile => {
+        const div = document.createElement('div');
+        div.className = `tile ${tile.color || 'black'} ${selectedTileId === tile.id ? 'selected' : ''}`;
+        div.innerHTML = `<span>${tile.value}</span><div class="dot"></div>`;
+        div.onclick = () => { selectedTileId = tile.id; renderGame(data); };
+        rackEl.appendChild(div);
+      });
+    }
+  </script>
+
+</body>
+</html>
