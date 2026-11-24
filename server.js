@@ -2,60 +2,86 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import * as Engine from './src/index.js';
+import {
+  Okey101Hand,
+  botStep,
+  colorOf,
+  numberOf,
+  isFake,
+  isOkey
+} from './src/index.js';
 
 const app = express();
 app.use(cors());
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: {
-    origin: "*", // Kendi web sitenizden gelen bağlantılara izin verir
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 app.get('/', (req, res) => {
-  res.send('101 Okey Sunucusu Aktif! Motor Fonksiyonlari: ' + Object.keys(Engine).join(', '));
+  res.send('101 Okey Sunucusu Aktif ve Motor Bagli!');
 });
 
 let game = null;
 let players = [null, null, null, null];
 
+// Taş ID'lerini arayüzün okuyabileceği renk ve sayı formatına çevirir
+function serializeTile(tileId, indicatorTile) {
+  if (tileId === null || tileId === undefined) return null;
+  return {
+    id: tileId,
+    color: colorOf(tileId),
+    value: isFake(tileId) ? 'Sahte' : numberOf(tileId),
+    isFake: isFake(tileId),
+    isOkey: indicatorTile !== undefined ? isOkey(tileId, indicatorTile) : false
+  };
+}
+
 function startNewGame() {
-  if (Engine.createHand101) {
-    game = Engine.createHand101({ playerCount: 4 });
-  } else if (Engine.createMatch) {
-    game = Engine.createMatch({ mode: '101' });
-  }
+  game = new Okey101Hand();
+  if (typeof game.deal === 'function') game.deal();
   broadcastState();
   checkBotTurn();
 }
 
 function broadcastState() {
   if (!game) return;
+  const indicator = game.indicator ?? game.gosterge;
+
   players.forEach((socketId, seatIndex) => {
     if (socketId && socketId !== 'BOT') {
-      const state = typeof game.getPublicState === 'function' ? game.getPublicState(seatIndex) : game;
-      io.to(socketId).emit('gameState', { seatIndex, players, state });
+      const rawHand = game.hands?.[seatIndex] || [];
+      const myHand = rawHand.map(t => serializeTile(t, indicator));
+      
+      // Yandan atılan son taşı bul
+      const discards = game.discards?.[seatIndex === 0 ? 3 : seatIndex - 1] || [];
+      const lastDiscard = discards.length > 0 ? serializeTile(discards[discards.length - 1], indicator) : null;
+
+      io.to(socketId).emit('gameState', {
+        seatIndex,
+        players,
+        currentTurn: game.turn ?? game.currentSeat ?? 0,
+        myHand,
+        lastDiscard,
+        melds: game.melds || game.tableMelds || []
+      });
     }
   });
 }
 
 function checkBotTurn() {
-  if (!game || game.isFinished) return;
-  const currentSeat = game.currentTurn ?? game.turn ?? 0;
+  if (!game || game.finished || game.isFinished) return;
+  const currentSeat = game.turn ?? game.currentSeat ?? 0;
+
   if (players[currentSeat] === 'BOT' || players[currentSeat] === null) {
     setTimeout(() => {
       try {
-        if (typeof Engine.chooseBotMove === 'function') {
-          const move = Engine.chooseBotMove(game, currentSeat);
-          if (move && typeof game.applyMove === 'function') game.applyMove(move);
-        }
+        botStep(game);
         broadcastState();
         checkBotTurn();
       } catch (err) {
-        console.error('Bot hatasi:', err.message);
+        console.error('Bot adim hatasi:', err.message);
       }
     }, 1000);
   }
@@ -73,10 +99,11 @@ io.on('connection', (socket) => {
   socket.on('playerAction', (action) => {
     if (!game) return;
     try {
-      if (action.type === 'drawStock' && game.drawFromStock) game.drawFromStock(action.seat);
-      if (action.type === 'drawDiscard' && game.drawFromDiscard) game.drawFromDiscard(action.seat);
-      if (action.type === 'discard' && game.discardTile) game.discardTile(action.seat, action.tileId);
-      if (action.type === 'openHand' && game.openHand) game.openHand(action.seat, action.melds);
+      if (action.type === 'drawStock' && typeof game.draw === 'function') game.draw(action.seat);
+      if (action.type === 'drawDiscard' && typeof game.takeDiscard === 'function') game.takeDiscard(action.seat);
+      if (action.type === 'discard' && typeof game.discard === 'function') game.discard(action.seat, action.tileId);
+      if (action.type === 'openHand' && typeof game.open === 'function') game.open(action.seat);
+
       broadcastState();
       checkBotTurn();
     } catch (e) {
